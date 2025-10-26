@@ -8,7 +8,7 @@ import io
 from datetime import datetime
 
 # =======================================================================
-# KONFIGURASI APLIKASI (PERBAIKAN v3.5 - Ditambahkan kembali)
+# KONFIGURASI APLIKASI (PERBAIKAN v3.5)
 # =======================================================================
 
 # Mengatur konfigurasi halaman Streamlit
@@ -50,8 +50,9 @@ TAB_CONFIG = {
     ]
 }
 
+
 # =======================================================================
-# GAYA / STYLING (CSS - Req Poin 1 + Update v3.4)
+# GAYA / STYLING (CSS - v3.4)
 # =======================================================================
 st.markdown(f"""
 <style>
@@ -67,21 +68,20 @@ st.markdown(f"""
     }}
     [data-testid="stSidebar"] .stRadio [data-testid="stWidgetLabel"] > div {{
         color: white; /* Warna teks radio button di sidebar */
-        font-size: 1.05rem; /* Perbesar sedikit */
+        font-size: 1.05rem;
         font-weight: 500;
     }}
     [data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label {{
         color: white; /* Warna label opsi radio */
-        padding: 8px 10px; /* Tambah padding agar terlihat seperti tombol */
+        padding: 8px 10px;
         border-radius: 8px;
         transition: background-color 0.3s ease;
     }}
-    /* --- CSS BARU v3.2: Sembunyikan titik radio --- */
-    /* Menggunakan selector yang lebih kuat untuk memastikan titik hilang */
+    /* Sembunyikan titik radio (v3.3 fix) */
     [data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {{
         display: none;
     }}
-    /* --- CSS BARU v3.2: Efek hover pada 'tombol' menu --- */
+    /* Efek hover pada 'tombol' menu (v3.3 fix) */
     [data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label:hover {{
         background-color: #7B68EE; /* MediumSlateBlue (sedikit lebih terang) */
     }}
@@ -113,47 +113,43 @@ st.markdown(f"""
         color: #6A5ACD; /* SlateBlue */
     }}
 
-    /* --- CSS BARU v3.3: Menyederhanakan Tampilan Tabel --- */
-    
-    /* Sembunyikan nomor baris (index) di dataframe & data_editor */
+    /* Menyederhanakan Tampilan Tabel (v3.3) */
+    /* Sembunyikan nomor indeks */
     [data-testid="rowNumberCell"] {{
         display: none;
     }}
     .stDataFrame {{
-        border: none;
+        border: none; /* Hapus border luar */
     }}
-
-    /* Sederhanakan header tabel */
+    /* Style header tabel */
     [data-testid="stDataFrame"] [data-testid="columnHeader"],
     [data-testid="stDataEditor"] [data-testid="columnHeader"] {{
-        background-color: #F0F8FF; /* Senada dengan background */
+        background-color: #F0F8FF; /* Samakan dgn background */
         border: none;
         font-weight: 600;
         font-size: 1.05rem;
-        color: #6A5ACD; /* Samakan dengan warna judul */
+        color: #6A5ACD;
         padding-left: 0;
     }}
-
-    /* Hapus border/grid internal tabel */
+    /* Style sel tabel */
     [data-testid="stDataFrame"] [data-testid="cell"] {{
         border: none;
+        padding-left: 0;
     }}
     [data-testid="stDataEditor"] [data-testid="cell"] {{
-        border-bottom: 1px solid #E0E0E0; /* Beri garis tipis antar baris */
+        border-bottom: 1px solid #E0E0E0;
         border-right: none;
         border-left: none;
         border-top: none;
     }}
-
 </style>
 """, unsafe_allow_html=True)
 
 
 # =======================================================================
-# FUNGSI KONEKSI & INISIALISASI DATABASE (Req Poin 2)
+# FUNGSI KONEKSI & INISIALISASI DATABASE
 # =======================================================================
 
-# Menggunakan cache_resource untuk koneksi agar tidak perlu login ulang setiap refresh
 @st.cache_resource
 def connect_to_gsheet():
     """Menghubungkan ke Google Sheets menggunakan Service Account."""
@@ -183,13 +179,11 @@ def load_data(worksheet_name):
         df = get_as_dataframe(worksheet, header=0, parse_dates=True, usecols=lambda x: x not in ['', None])
         df = df.dropna(axis=1, how='all')
         
-        # Pastikan semua kolom yang diharapkan ada, jika tidak tambahkan sebagai kolom kosong
         expected_cols = TAB_CONFIG.get(worksheet_name, [])
         for col in expected_cols:
             if col not in df.columns:
                 df[col] = pd.NA
         
-        # Konversi tipe data penting
         if worksheet_name == 'inventory_stock' and 'current_stock' in df.columns:
             df['current_stock'] = pd.to_numeric(df['current_stock'], errors='coerce').fillna(0)
         if worksheet_name == 'sales_orders' and 'product_quantity' in df.columns:
@@ -238,13 +232,15 @@ def update_worksheet(worksheet_name, df):
         
         # Pastikan kolom sesuai urutan di TAB_CONFIG
         if worksheet_name in TAB_CONFIG:
-            df = df[TAB_CONFIG[worksheet_name]]
+            # Ambil hanya kolom yang ada di TAB_CONFIG dan ada di DataFrame
+            cols_to_keep = [col for col in TAB_CONFIG[worksheet_name] if col in df.columns]
+            df = df[cols_to_keep]
             
         set_with_dataframe(worksheet, df, resize=True)
         st.cache_data.clear() # Hapus semua cache agar data baru dimuat
     except Exception as e:
         st.error(f"Gagal memperbarui '{worksheet_name}': {e}")
-        st.info("Pastikan urutan kolom di GSheet Anda sama dengan di TAB_CONFIG atau hapus tab GSheet agar dibuat ulang otomatis.")
+        st.info(f"Pastikan kolom di GSheet '{worksheet_name}' Anda adalah: {', '.join(TAB_CONFIG[worksheet_name])}")
 
 # =======================================================================
 # FUNGSI UTILITAS
@@ -280,7 +276,7 @@ sh = connect_to_gsheet()
 # 2. Inisialisasi Database (jika perlu)
 initialize_database(sh)
 
-# 3. Navigasi Sidebar (Req Poin 9) - UPDATE v3.2: Hapus 'Formulir Input Data'
+# 3. Navigasi Sidebar (Versi v3.5 - TANPA 'Formulir Input Data')
 st.sidebar.title("Navigasi Menu Evodia")
 page = st.sidebar.radio(
     "Pilih Halaman:",
@@ -289,7 +285,7 @@ page = st.sidebar.radio(
 )
 
 # =======================================================================
-# FUNGSI UNTUK MEMUAT DATA MASTER (FIX ERROR)
+# FUNGSI UNTUK MEMUAT DATA MASTER
 # =======================================================================
 def load_master_data():
     """Memuat semua data master untuk dropdown dan formulir. Dibuat robust."""
@@ -333,7 +329,7 @@ supplier_list = master_data["supplier_list"]
 material_list = master_data["material_list"]
 
 # =======================================================================
-# HALAMAN: DASHBOARD (Req Poin 6.1)
+# HALAMAN: DASHBOARD
 # =======================================================================
 if page == "Dashboard":
     st.header("Dashboard Utama")
@@ -357,89 +353,17 @@ if page == "Dashboard":
 
 
 # =======================================================================
-# HALAMAN: FORMULIR INPUT DATA (Req Poin 6.2) - DIHAPUS DI v3.2
-# =======================================================================
-# Halaman ini tidak lagi ada. Logika form dipindahkan ke
-# halaman 'Stok & Material' dan 'Laporan & Editor Data'
-# menggunakan st.dialog (popup)
-
-
-# =======================================================================
-# HALAMAN: STOK & MATERIAL (Req Poin 5) - UPDATE v3.2
+# HALAMAN: STOK & MATERIAL (Versi v3.5 - Dengan Tombol Popup)
 # =======================================================================
 elif page == "Stok & Material":
     st.header("Inventaris Stok Bahan Baku")
     st.info("Gunakan halaman ini untuk melihat dan memfilter stok. Untuk mengedit, gunakan halaman 'Manajemen Data (CRUD)'.")
 
-    # --- FITUR BARU v3.2: Tombol Popup Produksi Internal ---
+    # Tombol untuk memicu popup
     if st.button("Produksi Internal Baru", type="primary"):
-        # Reset data form (jika perlu, tapi form ini simpel)
-        
-        with st.dialog("Formulir Produksi Internal"):
-            st.subheader("Formulir Produksi Internal")
-            st.info("Gunakan form ini jika Anda memproduksi stok produk jadi tanpa ada penjualan langsung. Ini hanya akan mengurangi stok bahan baku.")
-            
-            if len(product_list) <= 1:
-                st.warning("Data produk ('products_bom') masih kosong. Harap isi data produk terlebih dahulu di halaman 'Manajemen Data (CRUD)' sebelum mencatat produksi.")
-            
-            # Pindahkan Form Produksi ke dalam dialog
-            with st.form("internal_production_form", clear_on_submit=True):
-                product_name = st.selectbox("Produk yang Akan Diproduksi", product_list, key="prod_int_product")
-                quantity_to_produce = st.number_input("Jumlah (Quantity) Produksi", min_value=1, value=1)
-                
-                submitted = st.form_submit_button("Produksi & Kurangi Bahan Baku")
-                
-                if submitted:
-                    if not product_name:
-                        st.error("Harap pilih produk.")
-                    elif len(product_list) <= 1:
-                        st.error("Tidak bisa produksi. Data produk masih kosong.")
-                    else:
-                        with st.spinner(f"Memproses produksi {product_name}...") as status_spinner:
-                            try:
-                                # (Logika backend tidak berubah)
-                                recipe_row = bom_df[bom_df['product_name'] == product_name]
-                                if recipe_row.empty:
-                                    st.error(f"Resep untuk produk '{product_name}' tidak ditemukan."); st.stop()
-                                
-                                components = json.loads(recipe_row.iloc[0]['components'])
-                                sufficient_stock = True
-                                stock_updates = []
-                                inventory_df_copy = inventory_df.copy()
-                                
-                                for item in components:
-                                    material = item['material_name']; supplier = item['supplier_name']
-                                    needed = item['quantity_needed'] * quantity_to_produce
-                                    mask = (inventory_df_copy['material_name'] == material) & \
-                                           (inventory_df_copy['supplier_name'] == supplier)
-                                    
-                                    if not mask.any():
-                                        st.error(f"Bahan baku '{material}' (Supp: {supplier}) tidak ditemukan."); sufficient_stock = False; break
-                                    
-                                    stock_idx = inventory_df_copy[mask].index[0]
-                                    current_stock = inventory_df_copy.loc[stock_idx, 'current_stock']
-                                    
-                                    if current_stock < needed:
-                                        st.error(f"Stok tidak cukup untuk '{material}'. Dibutuhkan: {needed}, Tersedia: {current_stock}"); sufficient_stock = False; break
-                                    else:
-                                        stock_updates.append((stock_idx, current_stock - needed))
-
-                                if sufficient_stock:
-                                    for idx, new_val in stock_updates:
-                                        inventory_df_copy.loc[idx, 'current_stock'] = new_val
-                                    
-                                    update_worksheet("inventory_stock", inventory_df_copy)
-                                    st.cache_data.clear()
-                                    st.success(f"Produksi internal {quantity_to_produce} pcs '{product_name}' berhasil! Stok bahan baku telah dikurangi.")
-                                    st.rerun() # Tutup dialog dan refresh
-
-                            except json.JSONDecodeError:
-                                st.error(f"Gagal memproses resep untuk '{product_name}'. Format JSON di 'products_bom' salah.")
-                            except Exception as e:
-                                st.error(f"Terjadi kesalahan saat memproses produksi: {e}")
-
+        st.session_state['run_production_form'] = True # State untuk memicu dialog
+    
     # Tampilkan sisa halaman (data stok)
-    st.markdown("---") # Pemisah
     if inventory_df.empty:
         st.info("Belum ada data di 'inventory_stock'. Silakan lakukan pembelian pertama.")
     else:
@@ -469,7 +393,68 @@ elif page == "Stok & Material":
         )
 
 # =======================================================================
-# HALAMAN: LAPORAN & EDITOR DATA (Req Poin 8, 10) - UPDATE v3.2
+# HALAMAN: MANAJEMEN DATA (CRUD) (Versi v3.5 - Dengan Tombol Popup)
+# =======================================================================
+elif page == "Manajemen Data (CRUD)":
+    st.header("Manajemen Data (Create, Read, Update, Delete)")
+    st.info("Gunakan `st.data_editor` di bawah ini untuk mengelola data master Anda. Anda bisa mengedit atau menghapus baris. Klik 'Simpan' untuk menerapkan perubahan.")
+
+    tab_prod, tab_stock = st.tabs(["Manajemen Produk (BOM)", "Manajemen Stok (Inventory)"])
+
+    with tab_prod:
+        st.subheader("Editor Produk (Bill of Materials)")
+        
+        if st.button("Tambah Produk Baru (BOM)", type="primary"):
+            st.session_state['run_bom_form'] = True # State untuk memicu dialog
+            
+        st.warning("PERHATIAN: Kolom 'components' harus diisi dengan format JSON yang valid.", icon="⚠️")
+        
+        edited_bom = st.data_editor(
+            bom_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "components": st.column_config.TextColumn("Components (JSON)", width="large", help="Contoh: [{\"material_name\": \"Methanol\", \"supplier_name\": \"KIMIA MARKET\", \"quantity_needed\": 10}]")
+            },
+            key="bom_editor"
+        )
+        
+        if st.button("Simpan Perubahan Produk (BOM)"):
+            if any(edited_bom['product_name'].duplicated()):
+                st.error("Gagal menyimpan: Ditemukan nama produk duplikat. Nama produk harus unik.")
+            else:
+                with st.spinner("Menyimpan perubahan produk..."):
+                    update_worksheet("products_bom", edited_bom)
+                    st.success("Perubahan pada 'products_bom' berhasil disimpan!")
+                    st.rerun()
+
+    with tab_stock:
+        st.subheader("Editor Stok (Master Inventaris)")
+        
+        if st.button("Tambah Stok Manual Baru", type="primary"):
+            st.session_state['run_stock_form'] = True # State untuk memicu dialog
+        
+        st.warning("Mengedit 'current_stock' di sini tidak akan tercatat di 'purchase_orders'. Gunakan 'Tambah Pembelian Baru' di halaman Laporan untuk pencatatan otomatis.", icon="⚠️")
+        
+        edited_stock = st.data_editor(
+            inventory_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            disabled=["material_id"], # ID tidak boleh diedit manual
+            key="stock_editor"
+        )
+        
+        if st.button("Simpan Perubahan Stok"):
+            if any(edited_stock[['material_name', 'supplier_name']].duplicated()):
+                st.error("Gagal menyimpan: Ditemukan duplikat kombinasi material & supplier. Kombinasi ini harus unik.")
+            else:
+                with st.spinner("Menyimpan perubahan stok..."):
+                    update_worksheet("inventory_stock", edited_stock)
+                    st.success("Perubahan pada 'inventory_stock' berhasil disimpan!")
+                    st.rerun()
+
+# =======================================================================
+# HALAMAN: LAPORAN & EDITOR DATA (Versi v3.5 - Dengan Tombol Popup)
 # =======================================================================
 elif page == "Laporan & Editor Data":
     st.header("Laporan & Editor Data (Penjualan & Pembelian)")
@@ -477,229 +462,18 @@ elif page == "Laporan & Editor Data":
     data_source = st.selectbox("Pilih Sumber Data:", ["Laporan Penjualan (sales_orders)", "Laporan Pembelian (purchase_orders)"])
     tab_name = "sales_orders" if data_source.startswith("Laporan Penjualan") else "purchase_orders"
     
-    # --- FITUR BARU v3.2: Tombol Popup Tambah Data ---
-    if tab_name == "sales_orders":
-        if st.button("Tambah Penjualan Baru", type="primary"):
-            
-            with st.dialog("Formulir Input Penjualan Baru"):
-                st.subheader("Formulir Input Penjualan Baru")
-                
-                if len(product_list) <= 1:
-                    st.warning("Data produk ('products_bom') masih kosong. Harap isi data produk terlebih dahulu di halaman 'Manajemen Data (CRUD)' sebelum mencatat penjualan.")
-                
-                # Pindahkan Form Penjualan ke dalam dialog
-                with st.form("new_sale_form", clear_on_submit=True):
-                    st.markdown("Masukkan detail penjualan baru. Stok akan otomatis berkurang.")
-                    
-                    col1, col2 = st.columns(2)
-                    client_name = col1.text_input("Nama Klien", placeholder="Nama Klien/Customer")
-                    status = col2.selectbox(
-                        "Status Pesanan", 
-                        ["Request", "Delivery", "Pending Payment", "Done"]
-                    )
-                    
-                    product_name = col1.selectbox("Nama Produk", product_list)
-                    product_quantity = col2.number_input("Jumlah (Quantity) Produk", min_value=1, value=1)
-                    
-                    total_purchase = col1.number_input("Total Pembelian (Rp)", min_value=0)
-                    payment_method = col2.selectbox(
-                        "Metode Pembayaran", 
-                        ["Cash", "Transfer", "QRIS", "Marketplace", "Lainnya"]
-                    )
-                    
-                    submitted = st.form_submit_button("Simpan Penjualan & Kurangi Stok")
+    # Tombol Popup Dinamis
+    col1, col2 = st.columns([1,1])
+    with col1:
+        if tab_name == "sales_orders":
+            if st.button("Tambah Penjualan Baru", type="primary", use_container_width=True):
+                st.session_state['run_sales_form'] = True
+        else:
+            if st.button("Tambah Pembelian Baru", type="primary", use_container_width=True):
+                st.session_state['run_purchase_form'] = True
 
-                    if submitted:
-                        if not all([client_name, product_name, product_quantity > 0]):
-                            st.error("Harap isi semua field yang diperlukan (Klien, Produk, Quantity).")
-                        elif len(product_list) <= 1:
-                             st.error("Tidak bisa menyimpan penjualan. Data produk masih kosong.")
-                        else:
-                            with st.spinner(f"Memproses penjualan {product_name}...") as status_spinner:
-                                try:
-                                    # (Logika backend penjualan tidak berubah)
-                                    recipe_row = bom_df[bom_df['product_name'] == product_name]
-                                    if recipe_row.empty:
-                                        st.error(f"Resep untuk produk '{product_name}' tidak ditemukan."); st.stop()
-                                    
-                                    components = json.loads(recipe_row.iloc[0]['components'])
-                                    sufficient_stock = True
-                                    stock_updates = []
-                                    inventory_df_copy = inventory_df.copy()
-                                    
-                                    for item in components:
-                                        material = item['material_name']; supplier = item['supplier_name']
-                                        needed = item['quantity_needed'] * product_quantity
-                                        mask = (inventory_df_copy['material_name'] == material) & \
-                                               (inventory_df_copy['supplier_name'] == supplier)
-                                        
-                                        if not mask.any():
-                                            st.error(f"Bahan baku '{material}' (Supp: {supplier}) tidak ditemukan."); sufficient_stock = False; break
-                                        
-                                        stock_idx = inventory_df_copy[mask].index[0]
-                                        current_stock = inventory_df_copy.loc[stock_idx, 'current_stock']
-                                        
-                                        if current_stock < needed:
-                                            st.error(f"Stok tidak cukup untuk '{material}'. Dibutuhkan: {needed}, Tersedia: {current_stock}"); sufficient_stock = False; break
-                                        else:
-                                            stock_updates.append((stock_idx, current_stock - needed))
-
-                                    if sufficient_stock:
-                                        for idx, new_val in stock_updates:
-                                            inventory_df_copy.loc[idx, 'current_stock'] = new_val
-                                        
-                                        update_worksheet("inventory_stock", inventory_df_copy)
-                                        
-                                        sales_ws = sh.worksheet("sales_orders")
-                                        sales_df = load_data("sales_orders")
-                                        next_id = get_next_id(sales_df, 'receipt_id', 'SALE')
-                                        new_sale_row = [
-                                            next_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                            client_name, product_name, int(product_quantity), 
-                                            float(total_purchase), payment_method, status
-                                        ]
-                                        sales_ws.append_row(new_sale_row)
-                                        
-                                        st.cache_data.clear()
-                                        st.success(f"Penjualan '{product_name}' ({product_quantity} pcs) berhasil disimpan!")
-                                        st.rerun() # Tutup dialog dan refresh
-
-                                except json.JSONDecodeError:
-                                    st.error(f"Gagal memproses resep untuk '{product_name}'. Format JSON di 'products_bom' salah.")
-                                except Exception as e:
-                                    st.error(f"Terjadi kesalahan saat memproses penjualan: {e}")
-
-    elif tab_name == "purchase_orders":
-        if st.button("Tambah Pembelian Baru", type="primary"):
-            # Reset form multi-item setiap kali tombol ditekan
-            st.session_state.purchase_items = [{"Material Name": "", "Price": 0, "Quantity": 1, "Unit": "gr"}]
-            
-            with st.dialog("Formulir Input Pembelian Baru (Multi-Item)"):
-                st.subheader("Formulir Input Pembelian Baru (Multi-Item)")
-                st.markdown("Formulir ini memungkinkan Anda mencatat beberapa item dalam satu PO (Purchase Order).")
-
-                # Inisialisasi state untuk data editor item (jika belum ada)
-                if 'purchase_items' not in st.session_state:
-                    st.session_state.purchase_items = [
-                        {"Material Name": "", "Price": 0, "Quantity": 1, "Unit": "gr"}
-                    ]
-
-                col1, col2 = st.columns(2)
-                supplier_name = col1.text_input("Nama Supplier", placeholder="cth: KIMIA MARKET (SHOPEE)", key="po_supplier")
-                category_po = col2.selectbox(
-                    "Category", 
-                    ["", "Operational", "RnD", "Asset"],
-                    key="po_category"
-                )
-                
-                sub_category_po = ""
-                if category_po in ["Operational", "RnD"]:
-                    sub_category_po = col2.selectbox(
-                        "Sub-Category", 
-                        ["", "Bahan Baku", "Barang Kemas"],
-                        key="po_subcategory"
-                    )
-                
-                status_po = col1.selectbox("Status Pembayaran", ["Pending", "Paid"], key="po_status")
-                payment_system = col2.selectbox("Sistem Pembayaran", ["Shopeepaylater", "Cash", "Transfer", "Marketplace"], key="po_payment")
-
-                st.markdown("---")
-                st.markdown("#### Items")
-                
-                # Data editor untuk multi-item (Sesuai Req Gambar)
-                edited_items = st.data_editor(
-                    st.session_state.purchase_items,
-                    num_rows="dynamic",
-                    column_config={
-                        "Material Name": st.column_config.TextColumn("Material Name", required=True),
-                        "Price": st.column_config.NumberColumn("Total Price (Rp)", min_value=0, required=True),
-                        "Quantity": st.column_config.NumberColumn("Quantity", min_value=0.01, format="%.2f", required=True),
-                        "Unit": st.column_config.TextColumn("Unit", required=True, help="cth: gr, ml, pcs"),
-                    },
-                    key="purchase_items_editor"
-                )
-                
-                if st.button("Simpan Pembelian & Tambah Stok", key="po_submit"):
-                    if not supplier_name or not category_po or not status_po:
-                        st.error("Harap isi field utama (Supplier, Category, Status).")
-                    elif category_po in ["Operational", "RnD"] and not sub_category_po:
-                        st.error("Harap isi Sub-Category untuk Operational atau RnD.")
-                    elif not edited_items or all(item['Material Name'] == "" for item in edited_items):
-                        st.error("Harap tambahkan setidaknya satu item pembelian.")
-                    else:
-                        with st.spinner("Memproses pembelian multi-item..."):
-                            try:
-                                # (Logika backend pembelian tidak berubah)
-                                purchase_ws = sh.worksheet("purchase_orders")
-                                purchase_df = load_data("purchase_orders")
-                                inventory_df_copy = load_data("inventory_stock").copy()
-                                
-                                new_purchase_rows = []
-                                items_processed = 0
-                                
-                                for item in edited_items:
-                                    material_name = item.get("Material Name")
-                                    quantity = float(item.get("Quantity", 0))
-                                    unit = item.get("Unit")
-                                    price = float(item.get("Price", 0))
-
-                                    if not material_name or quantity <= 0 or not unit:
-                                        st.warning(f"Melewatkan item '{material_name}' karena data tidak lengkap.")
-                                        continue
-
-                                    next_id = get_next_id(purchase_df, 'purchase_id', 'PO')
-                                    new_row_data = {
-                                        "purchase_id": next_id,
-                                        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                        "category": category_po,
-                                        "sub_category": sub_category_po,
-                                        "supplier_name": supplier_name,
-                                        "material_name": material_name,
-                                        "quantity": quantity,
-                                        "unit_of_measure": unit,
-                                        "price": price,
-                                        "payment_system": payment_system,
-                                        "status": status_po
-                                    }
-                                    new_purchase_rows.append(list(new_row_data.values()))
-                                    
-                                    purchase_df.loc[len(purchase_df)] = new_row_data
-
-                                    mask = (inventory_df_copy['material_name'] == material_name) & \
-                                           (inventory_df_copy['supplier_name'] == supplier_name)
-                                    
-                                    if mask.any():
-                                        stock_idx = inventory_df_copy[mask].index[0]
-                                        current_stock = inventory_df_copy.loc[stock_idx, 'current_stock']
-                                        inventory_df_copy.loc[stock_idx, 'current_stock'] = current_stock + quantity
-                                    else:
-                                        next_mat_id = get_next_id(inventory_df_copy, 'material_id', 'MAT')
-                                        new_mat_row = {
-                                            "material_id": next_mat_id,
-                                            "material_name": material_name,
-                                            "supplier_name": supplier_name,
-                                            "category": "Bahan Baku" if sub_category_po == "Bahan Baku" else "Kemasan",
-                                            "current_stock": quantity,
-                                            "unit_of_measure": unit
-                                        }
-                                        inventory_df_copy.loc[len(inventory_df_copy)] = new_mat_row
-                                    
-                                    items_processed += 1
-                                
-                                if items_processed > 0:
-                                    purchase_ws.append_rows(new_purchase_rows)
-                                    update_worksheet("inventory_stock", inventory_df_copy)
-                                    
-                                    st.cache_data.clear()
-                                    st.success(f"Pembelian berhasil disimpan! {items_processed} item diproses dan stok telah diperbarui.")
-                                    st.rerun() # Tutup dialog dan refresh
-                                else:
-                                    st.error("Tidak ada item yang valid untuk diproses.")
-                                    
-                            except Exception as e:
-                                st.error(f"Terjadi kesalahan saat memproses pembelian: {e}")
+    st.markdown("---")
     
-    st.markdown("---") # Pemisah
     try:
         all_data_df = load_data(tab_name)
         
@@ -759,7 +533,278 @@ elif page == "Laporan & Editor Data":
     except Exception as e:
         st.error(f"Gagal memuat halaman laporan: {e}")
 
+# =======================================================================
+# LOGIKA FORMULIR (st.dialog)
+# Semua logika formulir dipindahkan ke sini untuk dipanggil oleh st.dialog
+# =======================================================================
 
+# --- 1. Logika Form Penjualan ---
+def run_sales_form():
+    if len(product_list) <= 1:
+        st.warning("Data produk ('products_bom') masih kosong. Harap isi data produk terlebih dahulu di halaman 'Manajemen Data (CRUD)' sebelum mencatat penjualan.")
+    
+    with st.form("new_sale_form_popup", clear_on_submit=True):
+        client_name = st.text_input("Nama Klien", placeholder="Nama Klien/Customer")
+        status = st.selectbox("Status Pesanan", ["Request", "Delivery", "Pending Payment", "Done"])
+        product_name = st.selectbox("Nama Produk", product_list)
+        product_quantity = st.number_input("Jumlah (Quantity) Produk", min_value=1, value=1)
+        total_purchase = st.number_input("Total Pembelian (Rp)", min_value=0)
+        payment_method = st.selectbox("Metode Pembayaran", ["Cash", "Transfer", "QRIS", "Marketplace", "Lainnya"])
+        
+        submitted = st.form_submit_button("Simpan Penjualan & Kurangi Stok")
 
+        if submitted:
+            if not all([client_name, product_name, product_quantity > 0]):
+                st.error("Harap isi semua field yang diperlukan (Klien, Produk, Quantity).")
+            elif len(product_list) <= 1:
+                 st.error("Tidak bisa menyimpan penjualan. Data produk masih kosong.")
+            else:
+                with st.spinner(f"Memproses penjualan {product_name}..."):
+                    try:
+                        recipe_row = bom_df[bom_df['product_name'] == product_name]
+                        if recipe_row.empty: st.error(f"Resep untuk produk '{product_name}' tidak ditemukan."); st.stop()
+                        
+                        components = json.loads(recipe_row.iloc[0]['components'])
+                        sufficient_stock = True; stock_updates = []
+                        inventory_df_copy = inventory_df.copy()
+                        
+                        for item in components:
+                            material = item['material_name']; supplier = item['supplier_name']
+                            needed = item['quantity_needed'] * product_quantity
+                            mask = (inventory_df_copy['material_name'] == material) & (inventory_df_copy['supplier_name'] == supplier)
+                            
+                            if not mask.any(): st.error(f"Bahan baku '{material}' (Supp: {supplier}) tidak ditemukan."); sufficient_stock = False; break
+                            stock_idx = inventory_df_copy[mask].index[0]
+                            current_stock = inventory_df_copy.loc[stock_idx, 'current_stock']
+                            
+                            if current_stock < needed: st.error(f"Stok tidak cukup untuk '{material}'. Dibutuhkan: {needed}, Tersedia: {current_stock}"); sufficient_stock = False; break
+                            else: stock_updates.append((stock_idx, current_stock - needed))
 
+                        if sufficient_stock:
+                            for idx, new_val in stock_updates: inventory_df_copy.loc[idx, 'current_stock'] = new_val
+                            update_worksheet("inventory_stock", inventory_df_copy)
+                            
+                            sales_ws = sh.worksheet("sales_orders")
+                            sales_df = load_data("sales_orders")
+                            next_id = get_next_id(sales_df, 'receipt_id', 'SALE')
+                            new_sale_row = [next_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), client_name, product_name, int(product_quantity), float(total_purchase), payment_method, status]
+                            sales_ws.append_row(new_sale_row)
+                            
+                            st.cache_data.clear()
+                            st.success(f"Penjualan '{product_name}' ({product_quantity} pcs) berhasil disimpan!")
+                            st.session_state['run_sales_form'] = False # Tutup dialog
+                            st.rerun() # Refresh data
+                    except json.JSONDecodeError: st.error(f"Gagal memproses resep untuk '{product_name}'. Format JSON di 'products_bom' salah.")
+                    except Exception as e: st.error(f"Terjadi kesalahan saat memproses penjualan: {e}")
+
+# --- 2. Logika Form Pembelian ---
+def run_purchase_form():
+    if 'popup_purchase_items' not in st.session_state:
+        st.session_state.popup_purchase_items = [{"Material Name": "", "Price": 0, "Quantity": 1, "Unit": "gr"}]
+
+    with st.form("new_purchase_form_popup", clear_on_submit=False):
+        supplier_name = st.text_input("Nama Supplier", placeholder="cth: KIMIA MARKET (SHOPEE)")
+        category_po = st.selectbox("Category", ["", "Operational", "RnD", "Asset"])
+        
+        sub_category_po = ""
+        if category_po in ["Operational", "RnD"]:
+            sub_category_po = st.selectbox("Sub-Category", ["", "Bahan Baku", "Barang Kemas"])
+        
+        status_po = st.selectbox("Status Pembayaran", ["Pending", "Paid"])
+        payment_system = st.selectbox("Sistem Pembayaran", ["Shopeepaylater", "Cash", "Transfer", "Marketplace"])
+        st.markdown("---")
+        st.markdown("#### Items")
+        
+        edited_items = st.data_editor(
+            st.session_state.popup_purchase_items,
+            num_rows="dynamic",
+            column_config={
+                "Material Name": st.column_config.TextColumn("Material Name", required=True),
+                "Price": st.column_config.NumberColumn("Total Price (Rp)", min_value=0, required=True),
+                "Quantity": st.column_config.NumberColumn("Quantity", min_value=0.01, format="%.2f", required=True),
+                "Unit": st.column_config.TextColumn("Unit", required=True, help="cth: gr, ml, pcs"),
+            },
+            key="popup_purchase_items_editor"
+        )
+        
+        submitted_po = st.form_submit_button("Simpan Pembelian & Tambah Stok")
+
+        if submitted_po:
+            if not supplier_name or not category_po or not status_po: st.error("Harap isi field utama (Supplier, Category, Status)."); st.stop()
+            if category_po in ["Operational", "RnD"] and not sub_category_po: st.error("Harap isi Sub-Category untuk Operational atau RnD."); st.stop()
+            if not edited_items or all(item['Material Name'] == "" for item in edited_items): st.error("Harap tambahkan setidaknya satu item pembelian."); st.stop()
+            
+            with st.spinner("Memproses pembelian multi-item..."):
+                try:
+                    purchase_ws = sh.worksheet("purchase_orders")
+                    purchase_df = load_data("purchase_orders")
+                    inventory_df_copy = load_data("inventory_stock").copy()
+                    
+                    new_purchase_rows = []; items_processed = 0
+                    
+                    for item in edited_items:
+                        material_name = item.get("Material Name"); quantity = float(item.get("Quantity", 0))
+                        unit = item.get("Unit"); price = float(item.get("Price", 0))
+
+                        if not material_name or quantity <= 0 or not unit: st.warning(f"Melewatkan item '{material_name}' karena data tidak lengkap."); continue
+
+                        next_id = get_next_id(purchase_df, 'purchase_id', 'PO')
+                        new_row_data = {"purchase_id": next_id, "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "category": category_po, "sub_category": sub_category_po, "supplier_name": supplier_name, "material_name": material_name, "quantity": quantity, "unit_of_measure": unit, "price": price, "payment_system": payment_system, "status": status_po}
+                        new_purchase_rows.append(list(new_row_data.values()))
+                        purchase_df.loc[len(purchase_df)] = new_row_data
+
+                        mask = (inventory_df_copy['material_name'] == material_name) & (inventory_df_copy['supplier_name'] == supplier_name)
+                        
+                        if mask.any():
+                            stock_idx = inventory_df_copy[mask].index[0]
+                            current_stock = inventory_df_copy.loc[stock_idx, 'current_stock']
+                            inventory_df_copy.loc[stock_idx, 'current_stock'] = current_stock + quantity
+                        else:
+                            next_mat_id = get_next_id(inventory_df_copy, 'material_id', 'MAT')
+                            new_mat_row = {"material_id": next_mat_id, "material_name": material_name, "supplier_name": supplier_name, "category": "Bahan Baku" if sub_category_po == "Bahan Baku" else "Kemasan", "current_stock": quantity, "unit_of_measure": unit}
+                            inventory_df_copy.loc[len(inventory_df_copy)] = new_mat_row
+                        items_processed += 1
+                    
+                    if items_processed > 0:
+                        purchase_ws.append_rows(new_purchase_rows)
+                        update_worksheet("inventory_stock", inventory_df_copy)
+                        st.cache_data.clear()
+                        st.success(f"Pembelian berhasil disimpan! {items_processed} item diproses dan stok telah diperbarui.")
+                        st.session_state.popup_purchase_items = [{"Material Name": "", "Price": 0, "Quantity": 1, "Unit": "gr"}]
+                        st.session_state['run_purchase_form'] = False # Tutup dialog
+                        st.rerun() # Refresh data
+                    else: st.error("Tidak ada item yang valid untuk diproses.")
+                except Exception as e: st.error(f"Terjadi kesalahan saat memproses pembelian: {e}")
+
+# --- 3. Logika Form Produksi ---
+def run_production_form():
+    if len(product_list) <= 1:
+        st.warning("Data produk ('products_bom') masih kosong. Harap isi data produk terlebih dahulu di halaman 'Manajemen Data (CRUD)' sebelum mencatat produksi.")
+    
+    with st.form("internal_production_form_popup", clear_on_submit=True):
+        product_name = st.selectbox("Produk yang Akan Diproduksi", product_list, key="popup_prod_int_product")
+        quantity_to_produce = st.number_input("Jumlah (Quantity) Produksi", min_value=1, value=1)
+        submitted = st.form_submit_button("Produksi ke Stok & Kurangi Bahan Baku")
+        
+        if submitted:
+            if not product_name: st.error("Harap pilih produk."); st.stop()
+            if len(product_list) <= 1: st.error("Tidak bisa produksi. Data produk masih kosong."); st.stop()
+            
+            with st.spinner(f"Memproses produksi {product_name}..."):
+                try:
+                    recipe_row = bom_df[bom_df['product_name'] == product_name]
+                    if recipe_row.empty: st.error(f"Resep untuk produk '{product_name}' tidak ditemukan."); st.stop()
+                    
+                    components = json.loads(recipe_row.iloc[0]['components'])
+                    sufficient_stock = True; stock_updates = []
+                    inventory_df_copy = inventory_df.copy()
+                    
+                    for item in components:
+                        material = item['material_name']; supplier = item['supplier_name']
+                        needed = item['quantity_needed'] * quantity_to_produce
+                        mask = (inventory_df_copy['material_name'] == material) & (inventory_df_copy['supplier_name'] == supplier)
+                        
+                        if not mask.any(): st.error(f"Bahan baku '{material}' (Supp: {supplier}) tidak ditemukan."); sufficient_stock = False; break
+                        stock_idx = inventory_df_copy[mask].index[0]
+                        current_stock = inventory_df_copy.loc[stock_idx, 'current_stock']
+                        
+                        if current_stock < needed: st.error(f"Stok tidak cukup untuk '{material}'. Dibutuhkan: {needed}, Tersedia: {current_stock}"); sufficient_stock = False; break
+                        else: stock_updates.append((stock_idx, current_stock - needed))
+
+                    if sufficient_stock:
+                        for idx, new_val in stock_updates: inventory_df_copy.loc[idx, 'current_stock'] = new_val
+                        update_worksheet("inventory_stock", inventory_df_copy)
+                        st.cache_data.clear()
+                        st.success(f"Produksi internal {quantity_to_produce} pcs '{product_name}' berhasil! Stok bahan baku telah dikurangi.")
+                        st.session_state['run_production_form'] = False # Tutup dialog
+                        st.rerun() # Refresh data
+                except json.JSONDecodeError: st.error(f"Gagal memproses resep untuk '{product_name}'. Format JSON di 'products_bom' salah.")
+                except Exception as e: st.error(f"Terjadi kesalahan saat memproses produksi: {e}")
+
+# --- 4. Logika Form BOM (Produk) ---
+def run_bom_form():
+    st.warning("PERHATIAN: Kolom 'components' harus diisi dengan format JSON yang valid.", icon="⚠️")
+    with st.form("new_bom_form_popup", clear_on_submit=True):
+        product_name = st.text_input("Nama Produk Baru", placeholder="cth: Parfum A")
+        components = st.text_area("Components (JSON)", placeholder="[{\"material_name\": \"Methanol\", \"supplier_name\": \"KIMIA MARKET\", \"quantity_needed\": 10}]")
+        
+        submitted = st.form_submit_button("Simpan Produk Baru")
+        
+        if submitted:
+            if not product_name or not components: st.error("Harap isi semua field."); st.stop()
+            if bom_df['product_name'].str.contains(product_name, case=False).any(): st.error("Nama produk sudah ada."); st.stop()
+            
+            try:
+                json.loads(components) # Validasi JSON
+                bom_ws = sh.worksheet("products_bom")
+                bom_ws.append_row([product_name, components])
+                st.cache_data.clear()
+                st.success(f"Produk baru '{product_name}' berhasil disimpan!")
+                st.session_state['run_bom_form'] = False # Tutup dialog
+                st.rerun() # Refresh data
+            except json.JSONDecodeError: st.error("Format JSON tidak valid.")
+            except Exception as e: st.error(f"Gagal menyimpan produk: {e}")
+
+# --- 5. Logika Form Stok ---
+def run_stock_form():
+    st.warning("Ini akan menambah stok tanpa catatan pembelian. Gunakan 'Tambah Pembelian Baru' untuk pencatatan normal.", icon="⚠️")
+    with st.form("new_stock_form_popup", clear_on_submit=True):
+        material_name = st.text_input("Nama Material")
+        supplier_name = st.text_input("Nama Supplier")
+        category = st.selectbox("Category", ["Bahan Baku", "Kemasan", "Aset"])
+        current_stock = st.number_input("Jumlah Stok Awal", min_value=0.0, format="%.2f")
+        unit_of_measure = st.text_input("Unit (cth: gr, ml, pcs)")
+        
+        submitted = st.form_submit_button("Simpan Stok Baru")
+        
+        if submitted:
+            if not material_name or not supplier_name or not unit_of_measure: st.error("Harap isi semua field."); st.stop()
+            
+            inventory_df_copy = inventory_df.copy()
+            mask = (inventory_df_copy['material_name'] == material_name) & (inventory_df_copy['supplier_name'] == supplier_name)
+            
+            if mask.any(): st.error("Kombinasi material & supplier sudah ada."); st.stop()
+            
+            with st.spinner("Menyimpan stok baru..."):
+                try:
+                    next_mat_id = get_next_id(inventory_df_copy, 'material_id', 'MAT')
+                    new_mat_row = [next_mat_id, material_name, supplier_name, category, float(current_stock), unit_of_measure]
+                    
+                    stock_ws = sh.worksheet("inventory_stock")
+                    stock_ws.append_row(new_mat_row)
+                    st.cache_data.clear()
+                    st.success(f"Stok baru '{material_name}' berhasil disimpan!")
+                    st.session_state['run_stock_form'] = False # Tutup dialog
+                    st.rerun() # Refresh data
+                except Exception as e: st.error(f"Gagal menyimpan stok: {e}")
+
+# =======================================================================
+# KONTROLER DIALOG (Harus di akhir skrip)
+# =======================================================================
+
+if 'run_sales_form' not in st.session_state: st.session_state['run_sales_form'] = False
+if 'run_purchase_form' not in st.session_state: st.session_state['run_purchase_form'] = False
+if 'run_production_form' not in st.session_state: st.session_state['run_production_form'] = False
+if 'run_bom_form' not in st.session_state: st.session_state['run_bom_form'] = False
+if 'run_stock_form' not in st.session_state: st.session_state['run_stock_form'] = False
+
+if st.session_state['run_sales_form']:
+    with st.dialog("Formulir Penjualan Baru"):
+        run_sales_form()
+
+if st.session_state['run_purchase_form']:
+    with st.dialog("Formulir Pembelian Baru"):
+        run_purchase_form()
+
+if st.session_state['run_production_form']:
+    with st.dialog("Formulir Produksi Internal"):
+        run_production_form()
+
+if st.session_state['run_bom_form']:
+    with st.dialog("Formulir Produk (BOM) Baru"):
+        run_bom_form()
+
+if st.session_state['run_stock_form']:
+    with st.dialog("Formulir Stok Manual Baru"):
+        run_stock_form()
 

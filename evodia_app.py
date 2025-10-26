@@ -8,51 +8,7 @@ import io
 from datetime import datetime
 
 # =======================================================================
-# KONFIGURASI APLIKASI
-# =======================================================================
-
-# Mengatur konfigurasi halaman Streamlit
-st.set_page_config(
-    page_title="Evodia Management App",
-    page_icon="🌿",
-    layout="wide",
-    initial_sidebar_state="expanded" # Sidebar default terbuka di desktop
-)
-
-# Judul utama aplikasi
-st.title("🌿 Aplikasi Manajemen Bisnis Evodia v3.1")
-
-# Ambil konfigurasi dari st.secrets
-try:
-    GCP_CREDS = st.secrets["gcp_service_account"]
-    SHEET_URL = st.secrets["google_sheet"]["url"]
-except (KeyError, FileNotFoundError):
-    st.error("⚠️ Gagal memuat file 'secrets.toml'. Pastikan Anda telah mengikuti `setup_instructions.md` dan meng-klik 'Save' di Streamlit Cloud Secrets.")
-    st.stop()
-
-# Definisikan nama-nama tab dan kolomnya sesuai PRD (v3.1)
-# Menambahkan 'sub_category' ke 'purchase_orders'
-TAB_CONFIG = {
-    "sales_orders": [
-        "receipt_id", "date", "client_name", "product_name", 
-        "product_quantity", "total_purchase", "payment_method", "status"
-    ],
-    "purchase_orders": [
-        "purchase_id", "date", "category", "sub_category", "supplier_name", 
-        "material_name", "quantity", "unit_of_measure", "price", 
-        "payment_system", "status"
-    ],
-    "inventory_stock": [
-        "material_id", "material_name", "supplier_name", 
-        "category", "current_stock", "unit_of_measure"
-    ],
-    "products_bom": [
-        "product_name", "components"
-    ]
-}
-
-# =======================================================================
-# GAYA / STYLING (CSS - Req Poin 1 + Update v3.2)
+# GAYA / STYLING (CSS - Req Poin 1 + Update v3.4)
 # =======================================================================
 st.markdown(f"""
 <style>
@@ -78,7 +34,8 @@ st.markdown(f"""
         transition: background-color 0.3s ease;
     }}
     /* --- CSS BARU v3.2: Sembunyikan titik radio --- */
-    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label div[data-baseweb="radio"] {{
+    /* Menggunakan selector yang lebih kuat untuk memastikan titik hilang */
+    [data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {{
         display: none;
     }}
     /* --- CSS BARU v3.2: Efek hover pada 'tombol' menu --- */
@@ -86,32 +43,65 @@ st.markdown(f"""
         background-color: #7B68EE; /* MediumSlateBlue (sedikit lebih terang) */
     }}
 
-    /* Tombol Aksi - UPDATE v3.2: Tambah Animasi */
+    /* Tombol Aksi - UPDATE v3.4: Target tombol 'primary' */
     div[data-testid="stButton"] > button,
     div[data-testid="stFormSubmitButton"] > button {{
-        background-color: #FF69B4; /* HotPink */
-        color: white;
-        border: none;
+        background-color: #FF69B4 !important; /* HotPink */
+        color: white !important;
+        border: none !important;
         border-radius: 8px;
         padding: 10px 20px;
         transition: all 0.2s ease-in-out; /* <-- ANIMASI */
     }}
     div[data-testid="stButton"] > button:hover,
     div[data-testid="stFormSubmitButton"] > button:hover {{
-        background-color: #FF1493; /* DeepPink (hover) */
+        background-color: #FF1493 !important; /* DeepPink (hover) */
         transform: scale(1.03); /* <-- ANIMASI */
         box-shadow: 0 4px 15px rgba(255, 105, 180, 0.4); /* <-- ANIMASI */
     }}
     div[data-testid="stButton"] > button:active,
     div[data-testid="stFormSubmitButton"] > button:active {{
         transform: scale(0.98); /* <-- ANIMASI (Click effect) */
-        background-color: #C71585; /* MediumVioletRed */
+        background-color: #C71585 !important; /* MediumVioletRed */
     }}
     
     /* Aksen Judul */
     h1, h2 {{
         color: #6A5ACD; /* SlateBlue */
     }}
+
+    /* --- CSS BARU v3.3: Menyederhanakan Tampilan Tabel --- */
+    
+    /* Sembunyikan nomor baris (index) di dataframe & data_editor */
+    [data-testid="rowNumberCell"] {{
+        display: none;
+    }}
+    .stDataFrame {{
+        border: none;
+    }}
+
+    /* Sederhanakan header tabel */
+    [data-testid="stDataFrame"] [data-testid="columnHeader"],
+    [data-testid="stDataEditor"] [data-testid="columnHeader"] {{
+        background-color: #F0F8FF; /* Senada dengan background */
+        border: none;
+        font-weight: 600;
+        font-size: 1.05rem;
+        color: #6A5ACD; /* Samakan dengan warna judul */
+        padding-left: 0;
+    }}
+
+    /* Hapus border/grid internal tabel */
+    [data-testid="stDataFrame"] [data-testid="cell"] {{
+        border: none;
+    }}
+    [data-testid="stDataEditor"] [data-testid="cell"] {{
+        border-bottom: 1px solid #E0E0E0; /* Beri garis tipis antar baris */
+        border-right: none;
+        border-left: none;
+        border-top: none;
+    }}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -725,5 +715,7 @@ elif page == "Laporan & Editor Data":
 
     except Exception as e:
         st.error(f"Gagal memuat halaman laporan: {e}")
+
+
 
 

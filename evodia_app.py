@@ -19,26 +19,27 @@ st.set_page_config(
 )
 
 # Judul utama aplikasi
-st.title("🌿 Aplikasi Manajemen Bisnis Evodia v3.0")
+st.title("🌿 Aplikasi Manajemen Bisnis Evodia v3.1")
 
 # Ambil konfigurasi dari st.secrets
 try:
     GCP_CREDS = st.secrets["gcp_service_account"]
     SHEET_URL = st.secrets["google_sheet"]["url"]
 except (KeyError, FileNotFoundError):
-    st.error("⚠️ Gagal memuat file 'secrets.toml'. Pastikan Anda telah mengikuti `setup_instructions.md` dengan benar.")
+    st.error("⚠️ Gagal memuat file 'secrets.toml'. Pastikan Anda telah mengikuti `setup_instructions.md` dan meng-klik 'Save' di Streamlit Cloud Secrets.")
     st.stop()
 
-# Definisikan nama-nama tab dan kolomnya sesuai PRD
+# Definisikan nama-nama tab dan kolomnya sesuai PRD (v3.1)
+# Menambahkan 'sub_category' ke 'purchase_orders'
 TAB_CONFIG = {
     "sales_orders": [
         "receipt_id", "date", "client_name", "product_name", 
         "product_quantity", "total_purchase", "payment_method", "status"
     ],
     "purchase_orders": [
-        "purchase_id", "date", "category", "type_of_materials", 
-        "supplier_id", "supplier_name", "material_name", "quantity", 
-        "unit_of_measure", "price", "payment_system", "status"
+        "purchase_id", "date", "category", "sub_category", "supplier_name", 
+        "material_name", "quantity", "unit_of_measure", "price", 
+        "payment_system", "status"
     ],
     "inventory_stock": [
         "material_id", "material_name", "supplier_name", 
@@ -52,7 +53,7 @@ TAB_CONFIG = {
 # =======================================================================
 # GAYA / STYLING (CSS - Req Poin 1)
 # =======================================================================
-# Menerapkan skema warna kustom dari PRD
+# (Tidak ada perubahan, kode CSS yang sama dari v3.0)
 st.markdown(f"""
 <style>
     /* Latar belakang utama */
@@ -108,7 +109,6 @@ def connect_to_gsheet():
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        # Pastikan GCP_CREDS adalah dict, jika tidak, parse dari JSON string
         if isinstance(GCP_CREDS, str):
             creds_dict = json.loads(GCP_CREDS)
         else:
@@ -119,18 +119,22 @@ def connect_to_gsheet():
         spreadsheet = client.open_by_url(SHEET_URL)
         return spreadsheet
     except Exception as e:
-        st.error(f"Gagal terhubung ke Google Sheets: {e}")
+        st.error(f"Gagal terhubung ke Google Sheets: {e}. Cek kembali `secrets.toml` Anda.")
         st.stop()
 
-@st.cache_data(ttl=600) # Cache data selama 10 menit
+@st.cache_data(ttl=300) # Cache data selama 5 menit
 def load_data(worksheet_name):
     """Memuat data dari tab tertentu ke dalam Pandas DataFrame."""
     try:
         worksheet = sh.worksheet(worksheet_name)
-        # Menggunakan header=0 untuk mengambil baris pertama sebagai header
         df = get_as_dataframe(worksheet, header=0, parse_dates=True, usecols=lambda x: x not in ['', None])
-        # Membersihkan kolom yang mungkin kosong
         df = df.dropna(axis=1, how='all')
+        
+        # Pastikan semua kolom yang diharapkan ada, jika tidak tambahkan sebagai kolom kosong
+        expected_cols = TAB_CONFIG.get(worksheet_name, [])
+        for col in expected_cols:
+            if col not in df.columns:
+                df[col] = pd.NA
         
         # Konversi tipe data penting
         if worksheet_name == 'inventory_stock' and 'current_stock' in df.columns:
@@ -147,7 +151,7 @@ def load_data(worksheet_name):
         return pd.DataFrame(columns=TAB_CONFIG[worksheet_name])
     except Exception as e:
         st.error(f"Gagal memuat data dari '{worksheet_name}': {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=TAB_CONFIG.get(worksheet_name, []))
 
 def initialize_database(spreadsheet):
     """Memeriksa apakah semua tab yang diperlukan ada, jika tidak, buat tab tersebut."""
@@ -159,9 +163,7 @@ def initialize_database(spreadsheet):
             if tab_name not in existing_tabs:
                 st.warning(f"Tab '{tab_name}' tidak ditemukan. Membuat tab baru...")
                 try:
-                    # Buat worksheet baru
                     new_ws = spreadsheet.add_worksheet(title=tab_name, rows=100, cols=len(headers))
-                    # Tambahkan baris header
                     new_ws.append_row(headers)
                     st.success(f"Tab '{tab_name}' berhasil dibuat dengan header.")
                     setup_performed = True
@@ -170,34 +172,42 @@ def initialize_database(spreadsheet):
     
     if setup_performed:
         st.success("Inisialisasi database selesai. Harap refresh halaman.")
+        st.cache_data.clear() # Hapus cache setelah setup
         st.stop()
 
 def update_worksheet(worksheet_name, df):
     """Menulis ulang seluruh worksheet dengan data dari DataFrame."""
     try:
         worksheet = sh.worksheet(worksheet_name)
+        # Konversi kolom tanggal ke string sebelum menyimpan untuk menghindari error gspread
+        for col in df.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']).columns:
+            df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Pastikan kolom sesuai urutan di TAB_CONFIG
+        if worksheet_name in TAB_CONFIG:
+            df = df[TAB_CONFIG[worksheet_name]]
+            
         set_with_dataframe(worksheet, df, resize=True)
-        # Hapus cache untuk data ini agar data baru dimuat
-        load_data.clear()
+        st.cache_data.clear() # Hapus semua cache agar data baru dimuat
     except Exception as e:
         st.error(f"Gagal memperbarui '{worksheet_name}': {e}")
+        st.info("Pastikan urutan kolom di GSheet Anda sama dengan di TAB_CONFIG atau hapus tab GSheet agar dibuat ulang otomatis.")
 
 # =======================================================================
 # FUNGSI UTILITAS
 # =======================================================================
-def get_next_id(df, id_column):
+def get_next_id(df, id_column, prefix):
     """Menghasilkan ID unik berikutnya."""
     if df.empty or id_column not in df.columns or df[id_column].isnull().all():
-        return 1
+        return f"{prefix}-1"
     
-    # Ekstrak angka dari ID
-    numeric_ids = pd.to_numeric(df[id_column].astype(str).str.extract(r'(\d+)', expand=False), errors='coerce')
+    numeric_ids = pd.to_numeric(df[id_column].astype(str).str.replace(f'{prefix}-', ''), errors='coerce')
     numeric_ids = numeric_ids.dropna()
     
     if numeric_ids.empty:
-        return 1
+        return f"{prefix}-1"
     
-    return int(numeric_ids.max()) + 1
+    return f"{prefix}-{int(numeric_ids.max()) + 1}"
 
 def to_excel(df):
     """Mengonversi DataFrame ke file Excel di memori."""
@@ -221,8 +231,52 @@ initialize_database(sh)
 st.sidebar.title("Navigasi Menu Evodia")
 page = st.sidebar.radio(
     "Pilih Halaman:",
-    ("Dashboard", "Formulir Input Data", "Stok & Material", "Data Mentah & Laporan")
+    ("Dashboard", "Formulir Input Data", "Stok & Material", "Manajemen Data (CRUD)", "Laporan & Editor Data")
 )
+
+# =======================================================================
+# FUNGSI UNTUK MEMUAT DATA MASTER (FIX ERROR)
+# =======================================================================
+def load_master_data():
+    """Memuat semua data master untuk dropdown dan formulir. Dibuat robust."""
+    data = {
+        "bom_df": pd.DataFrame(columns=TAB_CONFIG["products_bom"]),
+        "inventory_df": pd.DataFrame(columns=TAB_CONFIG["inventory_stock"]),
+        "product_list": [""],
+        "supplier_list": [""],
+        "material_list": [""]
+    }
+    
+    try:
+        # Muat data BOM
+        bom_df = load_data("products_bom")
+        if not bom_df.empty and 'product_name' in bom_df.columns:
+            data["product_list"] = [""] + bom_df['product_name'].dropna().unique().tolist()
+        data["bom_df"] = bom_df
+
+        # Muat data Inventaris
+        inventory_df = load_data("inventory_stock")
+        if not inventory_df.empty:
+            if 'supplier_name' in inventory_df.columns:
+                data["supplier_list"] = [""] + inventory_df['supplier_name'].dropna().unique().tolist()
+            if 'material_name' in inventory_df.columns:
+                data["material_list"] = [""] + inventory_df['material_name'].dropna().unique().tolist()
+        data["inventory_df"] = inventory_df
+        
+        return data
+
+    except Exception as e:
+        # Ini akan menangkap error jika load_data gagal total
+        st.error(f"Gagal memuat data master: {e}")
+        return data # Kembalikan data kosong agar aplikasi tidak crash
+
+# Muat data master sekali di awal
+master_data = load_master_data()
+bom_df = master_data["bom_df"]
+inventory_df = master_data["inventory_df"]
+product_list = master_data["product_list"]
+supplier_list = master_data["supplier_list"]
+material_list = master_data["material_list"]
 
 # =======================================================================
 # HALAMAN: DASHBOARD (Req Poin 6.1)
@@ -231,20 +285,21 @@ if page == "Dashboard":
     st.header("Dashboard Utama")
     st.subheader("Ringkasan Bisnis")
     st.markdown("Halaman ini akan berisi metrik kunci dan ringkasan visual bisnis Anda.")
-    st.info("Fitur dashboard akan dikembangkan di versi selanjutnya.")
-
-    st.subheader("Data Sekilas")
+    
     col1, col2, col3 = st.columns(3)
     try:
         sales_df = load_data("sales_orders")
-        inventory_df = load_data("inventory_stock")
-        purchase_df = load_data("purchase_orders")
-
         col1.metric("Total Penjualan Tercatat", f"{len(sales_df)} Pesanan")
-        col2.metric("Total Item Bahan Baku", f"{len(inventory_df)} SKU")
+    except Exception:
+        col1.metric("Total Penjualan Tercatat", "Error")
+        
+    col2.metric("Total Item Bahan Baku", f"{len(inventory_df)} SKU")
+    
+    try:
+        purchase_df = load_data("purchase_orders")
         col3.metric("Total Pembelian Tercatat", f"{len(purchase_df)} Transaksi")
     except Exception:
-        st.warning("Gagal memuat data ringkasan. Pastikan tab GSheets sudah terisi.")
+        col3.metric("Total Pembelian Tercatat", "Error")
 
 
 # =======================================================================
@@ -253,28 +308,19 @@ if page == "Dashboard":
 elif page == "Formulir Input Data":
     st.header("Formulir Input Data")
     
-    # Muat data yang diperlukan untuk dropdown
-    try:
-        bom_df = load_data("products_bom")
-        inventory_df = load_data("inventory_stock")
-        
-        product_list = [""] + bom_df['product_name'].tolist()
-        supplier_list = [""] + inventory_df['supplier_name'].unique().tolist()
-        material_list = [""] + inventory_df['material_name'].unique().tolist()
-    except Exception as e:
-        st.error(f"Gagal memuat data master untuk formulir: {e}")
-        st.stop()
-
-    tab_sales, tab_purchase, tab_recipe, tab_production = st.tabs([
+    tab_sales, tab_purchase, tab_production = st.tabs([
         "Form: Input Penjualan Baru", 
-        "Form: Input Pembelian Baru", 
-        "Form: Editor Resep/Produk", 
+        "Form: Input Pembelian Baru (v3.1)", 
         "Form: Produksi Internal"
     ])
 
     # --- 1. Form Input Penjualan Baru (Req Poin 3 & 7) ---
     with tab_sales:
         st.subheader("Formulir Input Penjualan Baru")
+        
+        if len(product_list) <= 1:
+            st.warning("Data produk ('products_bom') masih kosong. Harap isi data produk terlebih dahulu di halaman 'Manajemen Data (CRUD)' sebelum mencatat penjualan.")
+        
         with st.form("new_sale_form", clear_on_submit=True):
             st.markdown("Masukkan detail penjualan baru. Stok akan otomatis berkurang.")
             
@@ -299,264 +345,18 @@ elif page == "Formulir Input Data":
             if submitted:
                 if not all([client_name, product_name, product_quantity > 0]):
                     st.error("Harap isi semua field yang diperlukan (Klien, Produk, Quantity).")
+                elif len(product_list) <= 1:
+                     st.error("Tidak bisa menyimpan penjualan. Data produk masih kosong.")
                 else:
                     with st.spinner(f"Memproses penjualan {product_name}...") as status_spinner:
                         try:
-                            # 1. Dapatkan resep
-                            recipe_row = bom_df[bom_df['product_name'] == product_name]
-                            if recipe_row.empty:
-                                st.error(f"Resep untuk produk '{product_name}' tidak ditemukan di tab 'products_bom'.")
-                                st.stop()
-                            
-                            components_json = recipe_row.iloc[0]['components']
-                            components = json.loads(components_json)
-                            
-                            # 2. Cek stok
-                            sufficient_stock = True
-                            stock_updates = [] # (index, new_stock)
-                            inventory_df_copy = inventory_df.copy() # Bekerja pada salinan
-                            
-                            for item in components:
-                                material = item['material_name']
-                                supplier = item['supplier_name']
-                                needed = item['quantity_needed'] * product_quantity
-                                
-                                # Cari stok di DataFrame
-                                mask = (inventory_df_copy['material_name'] == material) & \
-                                       (inventory_df_copy['supplier_name'] == supplier)
-                                
-                                if not mask.any():
-                                    st.error(f"Bahan baku '{material}' dari supplier '{supplier}' tidak ditemukan di 'inventory_stock'.")
-                                    sufficient_stock = False
-                                    break
-                                
-                                stock_idx = inventory_df_copy[mask].index[0]
-                                current_stock = inventory_df_copy.loc[stock_idx, 'current_stock']
-                                
-                                if current_stock < needed:
-                                    st.error(f"Stok tidak cukup untuk '{material}' (Supplier: {supplier}). Dibutuhkan: {needed}, Tersedia: {current_stock}")
-                                    sufficient_stock = False
-                                    break
-                                else:
-                                    # Simpan pembaruan untuk nanti
-                                    new_stock_val = current_stock - needed
-                                    stock_updates.append((stock_idx, new_stock_val))
-
-                            # 3. Jika stok cukup, proses transaksi
-                            if sufficient_stock:
-                                # a. Terapkan pembaruan stok ke DataFrame
-                                for idx, new_val in stock_updates:
-                                    inventory_df_copy.loc[idx, 'current_stock'] = new_val
-                                
-                                # b. Tulis pembaruan stok ke Google Sheet
-                                update_worksheet("inventory_stock", inventory_df_copy)
-                                
-                                # c. Tambahkan data penjualan ke Google Sheet
-                                sales_ws = sh.worksheet("sales_orders")
-                                sales_df = load_data("sales_orders") # Muat data terbaru untuk ID
-                                next_id = f"EVO-S-{get_next_id(sales_df, 'receipt_id'):04d}"
-                                new_sale_row = [
-                                    next_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    client_name, product_name, int(product_quantity), 
-                                    float(total_purchase), payment_method, status
-                                ]
-                                sales_ws.append_row(new_sale_row)
-                                
-                                load_data.clear() # Hapus semua cache
-                                st.success(f"Penjualan '{product_name}' ({product_quantity} pcs) berhasil disimpan! Stok bahan baku telah diperbarui.")
-
-                        except Exception as e:
-                            st.error(f"Terjadi kesalahan saat memproses penjualan: {e}")
-
-    # --- 2. Form Input Pembelian Baru (Req Poin 4 & 7) ---
-    with tab_purchase:
-        st.subheader("Formulir Input Pembelian Baru")
-        with st.form("new_purchase_form", clear_on_submit=True):
-            st.markdown("Masukkan detail pembelian bahan baku. Stok akan otomatis bertambah.")
-            
-            c1, c2, c3 = st.columns(3)
-            supplier_name = c1.text_input("Nama Supplier", placeholder="cth: KIMIA MARKET (SHOPEE)")
-            material_name = c2.text_input("Nama Material", placeholder="cth: Methanol")
-            quantity = c3.number_input("Jumlah (Quantity)", min_value=0.0, format="%.2f")
-            unit = c1.text_input("Satuan (UoM)", placeholder="cth: ml, gr, pcs")
-            price = c2.number_input("Harga Total Pembelian", min_value=0)
-            
-            category_po = c3.selectbox(
-                "Kategori Pembelian", 
-                ["Asset", "Operational", "Development"]
-            )
-            type_of_materials = c1.text_input("Tipe Material", placeholder="cth: Solvent, Fragrance")
-            payment_system = c2.selectbox("Sistem Pembayaran", ["Cash", "Transfer", "Marketplace"])
-            status_po = c3.selectbox("Status Pembayaran", ["Paid", "Pending"])
-            
-            # Kategori ini untuk master stok (inventory_stock)
-            category_stock = st.selectbox(
-                "Kategori Stok (Untuk Master Inventaris)", 
-                ["Bahan Baku", "Aset", "Kemasan"],
-                help="Pilih kategori untuk material ini di master stok. Jika material baru, ini akan digunakan."
-            )
-            
-            submitted = st.form_submit_button("Simpan Pembelian & Tambah Stok")
-
-            if submitted:
-                if not all([supplier_name, material_name, quantity > 0, unit]):
-                    st.error("Harap isi semua field utama (Supplier, Material, Quantity, Satuan).")
-                else:
-                    with st.spinner("Memproses pembelian...") as status_spinner:
-                        try:
-                            # 1. Tambahkan data pembelian ke 'purchase_orders'
-                            purchase_ws = sh.worksheet("purchase_orders")
-                            purchase_df = load_data("purchase_orders") # Muat data terbaru untuk ID
-                            next_id = f"EVO-P-{get_next_id(purchase_df, 'purchase_id'):04d}"
-                            
-                            new_purchase_row = [
-                                next_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                category_po, type_of_materials, "", supplier_name,
-                                material_name, float(quantity), unit, float(price),
-                                payment_system, status_po
-                            ]
-                            purchase_ws.append_row(new_purchase_row)
-                            
-                            # 2. Perbarui 'inventory_stock'
-                            inventory_df_copy = inventory_df.copy() # Muat salinan terbaru
-                            
-                            mask = (inventory_df_copy['material_name'] == material_name) & \
-                                   (inventory_df_copy['supplier_name'] == supplier_name)
-                            
-                            if mask.any():
-                                # Jika material ditemukan: Tambah stok
-                                stock_idx = inventory_df_copy[mask].index[0]
-                                current_stock = inventory_df_copy.loc[stock_idx, 'current_stock']
-                                inventory_df_copy.loc[stock_idx, 'current_stock'] = current_stock + float(quantity)
-                                
-                                status_spinner.update(label=f"Stok '{material_name}' ditemukan. Menambahkan {quantity}...")
-                            else:
-                                # Jika material tidak ditemukan: Buat entri baru
-                                next_mat_id = f"MAT-{get_next_id(inventory_df_copy, 'material_id'):04d}"
-                                new_material_data = {
-                                    "material_id": next_mat_id,
-                                    "material_name": material_name,
-                                    "supplier_name": supplier_name,
-                                    "category": category_stock,
-                                    "current_stock": float(quantity),
-                                    "unit_of_measure": unit
-                                }
-                                # Pastikan kolomnya sesuai
-                                new_row_df = pd.DataFrame([new_material_data], columns=TAB_CONFIG["inventory_stock"])
-                                inventory_df_copy = pd.concat([inventory_df_copy, new_row_df], ignore_index=True)
-                                
-                                status_spinner.update(label=f"Material baru '{material_name}' ditambahkan ke stok...")
-
-                            # 3. Tulis kembali ke Google Sheet
-                            update_worksheet("inventory_stock", inventory_df_copy)
-                            
-                            load_data.clear() # Hapus semua cache
-                            st.success(f"Pembelian '{material_name}' ({quantity} {unit}) berhasil disimpan! Stok telah diperbarui.")
-                            
-                        except Exception as e:
-                            st.error(f"Terjadi kesalahan saat memproses pembelian: {e}")
-    
-    # --- 3. Form Editor Resep/Produk (Req Poin 6) ---
-    with tab_recipe:
-        st.subheader("Editor Resep (Bill of Materials)")
-        
-        product_to_edit = st.selectbox(
-            "Pilih Produk untuk Diedit",
-            ["--- Buat Produk Baru ---"] + bom_df['product_name'].tolist()
-        )
-        
-        current_components_data = []
-        product_name_input = ""
-        
-        if product_to_edit == "--- Buat Produk Baru ---":
-            st.markdown("#### Membuat Produk Baru")
-            product_name_input = st.text_input("Nama Produk Baru", key="new_prod_name")
-            st.markdown("Tambahkan komponen resep di bawah ini:")
-            current_components_data = [
-                {"material_name": "Contoh Material", "supplier_name": "Contoh Supplier", "quantity_needed": 10}
-            ]
-        else:
-            st.markdown(f"#### Mengedit Produk: {product_to_edit}")
-            product_name_input = product_to_edit
-            try:
-                recipe_row = bom_df[bom_df['product_name'] == product_to_edit].iloc[0]
-                current_components_data = json.loads(recipe_row['components'])
-            except Exception as e:
-                st.error(f"Gagal memuat resep. Pastikan format JSON di GSheet benar. Error: {e}")
-                current_components_data = []
-
-        # Editor Resep (Req Poin 6)
-        st.markdown("**Editor Komponen Resep:**")
-        edited_components = st.data_editor(
-            current_components_data,
-            num_rows="dynamic",
-            column_config={
-                "material_name": st.column_config.SelectboxColumn("Material", options=material_list, required=True),
-                "supplier_name": st.column_config.SelectboxColumn("Supplier", options=supplier_list, required=True),
-                "quantity_needed": st.column_config.NumberColumn("Jumlah Dibutuhkan", min_value=0, format="%.2f", required=True)
-            },
-            key=f"editor_{product_to_edit}" # Key unik agar editor di-reset saat produk ganti
-        )
-        
-        if st.button("Simpan Resep"):
-            if not product_name_input:
-                st.error("Nama produk tidak boleh kosong.")
-            elif not edited_components:
-                st.error("Resep tidak boleh kosong.")
-            else:
-                with st.spinner(f"Menyimpan resep untuk '{product_name_input}'..."):
-                    try:
-                        bom_df_copy = bom_df.copy()
-                        new_json_components = json.dumps(edited_components)
-                        
-                        if product_to_edit == "--- Buat Produk Baru ---":
-                            # Tambah baris baru
-                            new_row_data = {
-                                "product_name": product_name_input,
-                                "components": new_json_components
-                            }
-                            new_row_df = pd.DataFrame([new_row_data], columns=TAB_CONFIG["products_bom"])
-                            bom_df_copy = pd.concat([bom_df_copy, new_row_df], ignore_index=True)
-                        else:
-                            # Update baris yang ada
-                            mask = bom_df_copy['product_name'] == product_to_edit
-                            bom_df_copy.loc[mask, 'components'] = new_json_components
-                        
-                        update_worksheet("products_bom", bom_df_copy)
-                        load_data.clear()
-                        st.success(f"Resep untuk '{product_name_input}' berhasil disimpan!")
-                        st.rerun() # Refresh halaman untuk update dropdown
-                        
-                    except Exception as e:
-                        st.error(f"Gagal menyimpan resep: {e}")
-
-    # --- 4. Form Produksi Internal (Req Poin 7) ---
-    with tab_production:
-        st.subheader("Formulir Produksi Internal")
-        st.info("Gunakan form ini jika Anda memproduksi stok produk jadi tanpa ada penjualan langsung. Ini hanya akan mengurangi stok bahan baku.")
-        
-        with st.form("internal_production_form", clear_on_submit=True):
-            product_name = st.selectbox("Produk yang Akan Diproduksi", product_list)
-            quantity_to_produce = st.number_input("Jumlah (Quantity) Produksi", min_value=1, value=1)
-            
-            submitted = st.form_submit_button("Produksi ke Stok & Kurangi Bahan Baku")
-            
-            if submitted:
-                if not product_name:
-                    st.error("Harap pilih produk.")
-                else:
-                    # Logika ini SAMA DENGAN PENJUALAN, hanya tanpa menyimpan ke 'sales_orders'
-                    with st.spinner(f"Memproses produksi {product_name}...") as status_spinner:
-                        try:
-                            # 1. Dapatkan resep
+                            # (Logika backend penjualan tidak berubah dari v3.0)
                             recipe_row = bom_df[bom_df['product_name'] == product_name]
                             if recipe_row.empty:
                                 st.error(f"Resep untuk produk '{product_name}' tidak ditemukan.")
                                 st.stop()
                             
                             components = json.loads(recipe_row.iloc[0]['components'])
-                            
-                            # 2. Cek stok
                             sufficient_stock = True
                             stock_updates = []
                             inventory_df_copy = inventory_df.copy()
@@ -564,37 +364,239 @@ elif page == "Formulir Input Data":
                             for item in components:
                                 material = item['material_name']
                                 supplier = item['supplier_name']
-                                needed = item['quantity_needed'] * quantity_to_produce
-                                
+                                needed = item['quantity_needed'] * product_quantity
                                 mask = (inventory_df_copy['material_name'] == material) & \
                                        (inventory_df_copy['supplier_name'] == supplier)
                                 
                                 if not mask.any():
-                                    st.error(f"Bahan baku '{material}' (Supplier: {supplier}) tidak ditemukan.")
-                                    sufficient_stock = False
-                                    break
+                                    st.error(f"Bahan baku '{material}' (Supp: {supplier}) tidak ditemukan.")
+                                    sufficient_stock = False; break
                                 
                                 stock_idx = inventory_df_copy[mask].index[0]
                                 current_stock = inventory_df_copy.loc[stock_idx, 'current_stock']
                                 
                                 if current_stock < needed:
                                     st.error(f"Stok tidak cukup untuk '{material}'. Dibutuhkan: {needed}, Tersedia: {current_stock}")
-                                    sufficient_stock = False
-                                    break
+                                    sufficient_stock = False; break
                                 else:
-                                    new_stock_val = current_stock - needed
-                                    stock_updates.append((stock_idx, new_stock_val))
+                                    stock_updates.append((stock_idx, current_stock - needed))
 
-                            # 3. Jika stok cukup, proses
                             if sufficient_stock:
                                 for idx, new_val in stock_updates:
                                     inventory_df_copy.loc[idx, 'current_stock'] = new_val
                                 
                                 update_worksheet("inventory_stock", inventory_df_copy)
                                 
-                                load_data.clear()
+                                sales_ws = sh.worksheet("sales_orders")
+                                sales_df = load_data("sales_orders")
+                                next_id = get_next_id(sales_df, 'receipt_id', 'SALE')
+                                new_sale_row = [
+                                    next_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    client_name, product_name, int(product_quantity), 
+                                    float(total_purchase), payment_method, status
+                                ]
+                                sales_ws.append_row(new_sale_row)
+                                
+                                st.cache_data.clear()
+                                st.success(f"Penjualan '{product_name}' ({product_quantity} pcs) berhasil disimpan!")
+                        except json.JSONDecodeError:
+                            st.error(f"Gagal memproses resep untuk '{product_name}'. Format JSON di 'products_bom' salah.")
+                        except Exception as e:
+                            st.error(f"Terjadi kesalahan saat memproses penjualan: {e}")
+
+    # --- 2. Form Input Pembelian Baru (PEROMBAKAN v3.1) ---
+    with tab_purchase:
+        st.subheader("Formulir Input Pembelian Baru (Multi-Item)")
+        st.markdown("Formulir ini memungkinkan Anda mencatat beberapa item dalam satu PO (Purchase Order).")
+
+        # Inisialisasi state untuk data editor item
+        if 'purchase_items' not in st.session_state:
+            st.session_state.purchase_items = [
+                {"Material Name": "", "Price": 0, "Quantity": 1, "Unit": "gr"}
+            ]
+
+        col1, col2 = st.columns(2)
+        supplier_name = col1.text_input("Nama Supplier", placeholder="cth: KIMIA MARKET (SHOPEE)")
+        category_po = col2.selectbox(
+            "Category", 
+            ["", "Operational", "RnD", "Asset"]
+        )
+        
+        sub_category_po = ""
+        if category_po in ["Operational", "RnD"]:
+            sub_category_po = col2.selectbox(
+                "Sub-Category", 
+                ["", "Bahan Baku", "Barang Kemas"]
+            )
+        
+        status_po = col1.selectbox("Status Pembayaran", ["Pending", "Paid"])
+        payment_system = col2.selectbox("Sistem Pembayaran", ["Shopeepaylater", "Cash", "Transfer", "Marketplace"])
+
+        st.markdown("---")
+        st.markdown("#### Items")
+        
+        # Data editor untuk multi-item (Sesuai Req Gambar)
+        edited_items = st.data_editor(
+            st.session_state.purchase_items,
+            num_rows="dynamic",
+            column_config={
+                "Material Name": st.column_config.TextColumn("Material Name", required=True),
+                "Price": st.column_config.NumberColumn("Total Price (Rp)", min_value=0, required=True),
+                "Quantity": st.column_config.NumberColumn("Quantity", min_value=0.01, format="%.2f", required=True),
+                "Unit": st.column_config.TextColumn("Unit", required=True, help="cth: gr, ml, pcs"),
+            },
+            key="purchase_items_editor"
+        )
+        
+        if st.button("Simpan Pembelian & Tambah Stok"):
+            if not supplier_name or not category_po or not status_po:
+                st.error("Harap isi field utama (Supplier, Category, Status).")
+            elif category_po in ["Operational", "RnD"] and not sub_category_po:
+                st.error("Harap isi Sub-Category untuk Operational atau RnD.")
+            elif not edited_items or all(item['Material Name'] == "" for item in edited_items):
+                st.error("Harap tambahkan setidaknya satu item pembelian.")
+            else:
+                with st.spinner("Memproses pembelian multi-item..."):
+                    try:
+                        # 1. Muat data GSheets sekali saja
+                        purchase_ws = sh.worksheet("purchase_orders")
+                        purchase_df = load_data("purchase_orders")
+                        inventory_df_copy = load_data("inventory_stock").copy()
+                        
+                        new_purchase_rows = []
+                        items_processed = 0
+                        
+                        # 2. Loop melalui item yang di-submit di data_editor
+                        for item in edited_items:
+                            material_name = item.get("Material Name")
+                            quantity = float(item.get("Quantity", 0))
+                            unit = item.get("Unit")
+                            price = float(item.get("Price", 0))
+
+                            if not material_name or quantity <= 0 or not unit:
+                                st.warning(f"Melewatkan item '{material_name}' karena data tidak lengkap.")
+                                continue
+
+                            # 3. Siapkan baris untuk 'purchase_orders'
+                            next_id = get_next_id(purchase_df, 'purchase_id', 'PO')
+                            new_row_data = {
+                                "purchase_id": next_id,
+                                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "category": category_po,
+                                "sub_category": sub_category_po,
+                                "supplier_name": supplier_name,
+                                "material_name": material_name,
+                                "quantity": quantity,
+                                "unit_of_measure": unit,
+                                "price": price,
+                                "payment_system": payment_system,
+                                "status": status_po
+                            }
+                            new_purchase_rows.append(list(new_row_data.values()))
+                            
+                            # Perbarui purchase_df sementara agar ID berikutnya benar
+                            purchase_df.loc[len(purchase_df)] = new_row_data
+
+                            # 4. Perbarui 'inventory_stock' (di dalam memory/DataFrame)
+                            mask = (inventory_df_copy['material_name'] == material_name) & \
+                                   (inventory_df_copy['supplier_name'] == supplier_name)
+                            
+                            if mask.any():
+                                # Jika material ditemukan: Tambah stok
+                                stock_idx = inventory_df_copy[mask].index[0]
+                                current_stock = inventory_df_copy.loc[stock_idx, 'current_stock']
+                                inventory_df_copy.loc[stock_idx, 'current_stock'] = current_stock + quantity
+                            else:
+                                # Jika material tidak ditemukan: Buat entri baru
+                                next_mat_id = get_next_id(inventory_df_copy, 'material_id', 'MAT')
+                                new_mat_row = {
+                                    "material_id": next_mat_id,
+                                    "material_name": material_name,
+                                    "supplier_name": supplier_name,
+                                    "category": "Bahan Baku" if sub_category_po == "Bahan Baku" else "Kemasan",
+                                    "current_stock": quantity,
+                                    "unit_of_measure": unit
+                                }
+                                inventory_df_copy.loc[len(inventory_df_copy)] = new_mat_row
+                            
+                            items_processed += 1
+                        
+                        # 5. Tulis ke Google Sheets (Batch Update)
+                        if items_processed > 0:
+                            purchase_ws.append_rows(new_purchase_rows)
+                            update_worksheet("inventory_stock", inventory_df_copy)
+                            
+                            st.cache_data.clear()
+                            st.success(f"Pembelian berhasil disimpan! {items_processed} item diproses dan stok telah diperbarui.")
+                            
+                            # Reset form
+                            st.session_state.purchase_items = [{"Material Name": "", "Price": 0, "Quantity": 1, "Unit": "gr"}]
+                            st.rerun()
+                        else:
+                            st.error("Tidak ada item yang valid untuk diproses.")
+                            
+                    except Exception as e:
+                        st.error(f"Terjadi kesalahan saat memproses pembelian: {e}")
+
+    # --- 3. Form Produksi Internal (Req Poin 7) ---
+    with tab_production:
+        st.subheader("Formulir Produksi Internal")
+        st.info("Gunakan form ini jika Anda memproduksi stok produk jadi tanpa ada penjualan langsung. Ini hanya akan mengurangi stok bahan baku.")
+        
+        if len(product_list) <= 1:
+            st.warning("Data produk ('products_bom') masih kosong. Harap isi data produk terlebih dahulu di halaman 'Manajemen Data (CRUD)' sebelum mencatat produksi.")
+        
+        with st.form("internal_production_form", clear_on_submit=True):
+            product_name = st.selectbox("Produk yang Akan Diproduksi", product_list, key="prod_int_product")
+            quantity_to_produce = st.number_input("Jumlah (Quantity) Produksi", min_value=1, value=1)
+            
+            submitted = st.form_submit_button("Produksi ke Stok & Kurangi Bahan Baku")
+            
+            if submitted:
+                if not product_name:
+                    st.error("Harap pilih produk.")
+                elif len(product_list) <= 1:
+                    st.error("Tidak bisa produksi. Data produk masih kosong.")
+                else:
+                    # (Logika backend tidak berubah dari v3.0)
+                    with st.spinner(f"Memproses produksi {product_name}...") as status_spinner:
+                        try:
+                            recipe_row = bom_df[bom_df['product_name'] == product_name]
+                            if recipe_row.empty:
+                                st.error(f"Resep untuk produk '{product_name}' tidak ditemukan."); st.stop()
+                            
+                            components = json.loads(recipe_row.iloc[0]['components'])
+                            sufficient_stock = True
+                            stock_updates = []
+                            inventory_df_copy = inventory_df.copy()
+                            
+                            for item in components:
+                                material = item['material_name']; supplier = item['supplier_name']
+                                needed = item['quantity_needed'] * quantity_to_produce
+                                mask = (inventory_df_copy['material_name'] == material) & \
+                                       (inventory_df_copy['supplier_name'] == supplier)
+                                
+                                if not mask.any():
+                                    st.error(f"Bahan baku '{material}' (Supp: {supplier}) tidak ditemukan."); sufficient_stock = False; break
+                                
+                                stock_idx = inventory_df_copy[mask].index[0]
+                                current_stock = inventory_df_copy.loc[stock_idx, 'current_stock']
+                                
+                                if current_stock < needed:
+                                    st.error(f"Stok tidak cukup untuk '{material}'. Dibutuhkan: {needed}, Tersedia: {current_stock}"); sufficient_stock = False; break
+                                else:
+                                    stock_updates.append((stock_idx, current_stock - needed))
+
+                            if sufficient_stock:
+                                for idx, new_val in stock_updates:
+                                    inventory_df_copy.loc[idx, 'current_stock'] = new_val
+                                
+                                update_worksheet("inventory_stock", inventory_df_copy)
+                                st.cache_data.clear()
                                 st.success(f"Produksi internal {quantity_to_produce} pcs '{product_name}' berhasil! Stok bahan baku telah dikurangi.")
 
+                        except json.JSONDecodeError:
+                            st.error(f"Gagal memproses resep untuk '{product_name}'. Format JSON di 'products_bom' salah.")
                         except Exception as e:
                             st.error(f"Terjadi kesalahan saat memproses produksi: {e}")
 
@@ -602,56 +604,95 @@ elif page == "Formulir Input Data":
 # HALAMAN: STOK & MATERIAL (Req Poin 5)
 # =======================================================================
 elif page == "Stok & Material":
-    st.header("Inventaris Stok Bahan Baku Saat Ini")
+    st.header("Inventaris Stok Bahan Baku (Read-Only)")
+    st.info("Gunakan halaman ini untuk melihat dan memfilter stok. Untuk mengedit, gunakan halaman 'Manajemen Data (CRUD)'.")
     
-    try:
-        inventory_df = load_data("inventory_stock")
+    if inventory_df.empty:
+        st.info("Belum ada data di 'inventory_stock'. Silakan lakukan pembelian pertama.")
+    else:
+        search_term = st.text_input("Cari Material atau Supplier:", placeholder="Ketik untuk memfilter...")
         
-        if inventory_df.empty:
-            st.info("Belum ada data di 'inventory_stock'. Silakan lakukan pembelian pertama.")
+        if search_term:
+            filtered_df = inventory_df[
+                inventory_df['material_name'].astype(str).str.contains(search_term, case=False, na=False) |
+                inventory_df['supplier_name'].astype(str).str.contains(search_term, case=False, na=False)
+            ]
         else:
-            # Filter (Req Poin 5)
-            search_term = st.text_input("Cari Material atau Supplier:", placeholder="Ketik untuk memfilter...")
-            
-            if search_term:
-                filtered_df = inventory_df[
-                    inventory_df['material_name'].str.contains(search_term, case=False, na=False) |
-                    inventory_df['supplier_name'].str.contains(search_term, case=False, na=False)
-                ]
+            filtered_df = inventory_df.copy()
+        
+        low_stock_threshold = st.number_input("Tandai stok rendah di bawah:", min_value=0, value=10)
+        
+        def style_low_stock(row):
+            if 'current_stock' in row:
+                try:
+                    if float(row['current_stock']) <= low_stock_threshold:
+                        return ['background-color: #FFCCCB'] * len(row)
+                except (ValueError, TypeError): pass
+            return [''] * len(row)
+
+        st.dataframe(
+            filtered_df.style.apply(style_low_stock, axis=1),
+            use_container_width=True
+        )
+
+# =======================================================================
+# HALAMAN: MANAJEMEN DATA (CRUD) (FITUR BARU v3.1)
+# =======================================================================
+elif page == "Manajemen Data (CRUD)":
+    st.header("Manajemen Data (Create, Read, Update, Delete)")
+    st.info("Gunakan `st.data_editor` di bawah ini untuk mengelola data master Anda. Anda bisa menambah, mengedit, atau menghapus baris. Klik 'Simpan' untuk menerapkan perubahan.")
+
+    tab_prod, tab_stock = st.tabs(["Manajemen Produk (BOM)", "Manajemen Stok (Inventory)"])
+
+    with tab_prod:
+        st.subheader("Editor Produk (Bill of Materials)")
+        st.warning("PERHATIAN: Kolom 'components' harus diisi dengan format JSON yang valid.", icon="⚠️")
+        
+        edited_bom = st.data_editor(
+            bom_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "components": st.column_config.TextColumn("Components (JSON)", width="large", help="Contoh: [{\"material_name\": \"Methanol\", \"supplier_name\": \"KIMIA MARKET\", \"quantity_needed\": 10}]")
+            },
+            key="bom_editor"
+        )
+        
+        if st.button("Simpan Perubahan Produk (BOM)"):
+            if any(edited_bom['product_name'].duplicated()):
+                st.error("Gagal menyimpan: Ditemukan nama produk duplikat. Nama produk harus unik.")
             else:
-                filtered_df = inventory_df.copy()
-            
-            # Peringatan stok rendah
-            low_stock_threshold = st.number_input("Tandai stok rendah di bawah:", min_value=0, value=10)
-            
-            # Conditional Formatting (Req Poin 5)
-            def style_low_stock(row):
-                if 'current_stock' in row:
-                    try:
-                        if float(row['current_stock']) <= low_stock_threshold:
-                            return ['background-color: #FFCCCB'] * len(row) # Merah muda
-                    except (ValueError, TypeError):
-                        pass
-                return [''] * len(row)
+                with st.spinner("Menyimpan perubahan produk..."):
+                    update_worksheet("products_bom", edited_bom)
+                    st.success("Perubahan pada 'products_bom' berhasil disimpan!")
+                    st.rerun()
 
-            st.dataframe(
-                filtered_df.style.apply(style_low_stock, axis=1),
-                use_container_width=True
-            )
-            
-            low_stock_items = filtered_df[filtered_df['current_stock'] <= low_stock_threshold]
-            if not low_stock_items.empty:
-                st.warning(f"**Peringatan Stok Rendah:** Ada {len(low_stock_items)} item yang berada di bawah atau sama dengan {low_stock_threshold} unit.")
-                st.dataframe(low_stock_items[['material_name', 'supplier_name', 'current_stock', 'unit_of_measure']], use_container_width=True)
-
-    except Exception as e:
-        st.error(f"Gagal memuat data inventaris: {e}")
+    with tab_stock:
+        st.subheader("Editor Stok (Master Inventaris)")
+        st.warning("Mengedit 'current_stock' di sini tidak akan tercatat di 'purchase_orders'. Gunakan 'Formulir Input Pembelian' untuk pencatatan otomatis.", icon="⚠️")
+        
+        edited_stock = st.data_editor(
+            inventory_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            disabled=["material_id"], # ID tidak boleh diedit manual
+            key="stock_editor"
+        )
+        
+        if st.button("Simpan Perubahan Stok"):
+            if any(edited_stock[['material_name', 'supplier_name']].duplicated()):
+                st.error("Gagal menyimpan: Ditemukan duplikat kombinasi material & supplier. Kombinasi ini harus unik.")
+            else:
+                with st.spinner("Menyimpan perubahan stok..."):
+                    update_worksheet("inventory_stock", edited_stock)
+                    st.success("Perubahan pada 'inventory_stock' berhasil disimpan!")
+                    st.rerun()
 
 # =======================================================================
-# HALAMAN: DATA MENTAH & LAPORAN (Req Poin 8, 10)
+# HALAMAN: LAPORAN & EDITOR DATA (Req Poin 8, 10)
 # =======================================================================
-elif page == "Data Mentah & Laporan":
-    st.header("Data Mentah, Editor & Laporan")
+elif page == "Laporan & Editor Data":
+    st.header("Laporan & Editor Data (Penjualan & Pembelian)")
     
     data_source = st.selectbox("Pilih Sumber Data:", ["Laporan Penjualan (sales_orders)", "Laporan Pembelian (purchase_orders)"])
     tab_name = "sales_orders" if data_source.startswith("Laporan Penjualan") else "purchase_orders"
@@ -659,19 +700,12 @@ elif page == "Data Mentah & Laporan":
     try:
         all_data_df = load_data(tab_name)
         
-        if 'date' not in all_data_df.columns:
-            st.error(f"Kolom 'date' tidak ditemukan di tab '{tab_name}'. Filter tanggal tidak dapat digunakan.")
-            st.dataframe(all_data_df, use_container_width=True)
-        
-        elif all_data_df.empty:
-            st.info(f"Belum ada data di '{tab_name}'.")
-        
+        if 'date' not in all_data_df.columns or all_data_df.empty:
+            st.info(f"Belum ada data di '{tab_name}' atau kolom 'date' tidak ditemukan.")
         else:
-            # Pastikan 'date' adalah datetime
             all_data_df['date'] = pd.to_datetime(all_data_df['date'], errors='coerce')
-            all_data_df = all_data_df.dropna(subset=['date']) # Hapus baris dengan tanggal tidak valid
+            all_data_df = all_data_df.dropna(subset=['date'])
 
-            # Filter Tanggal (Req Poin 8)
             st.subheader("Filter Data")
             col1, col2 = st.columns(2)
             min_date = all_data_df['date'].min().date()
@@ -683,60 +717,35 @@ elif page == "Data Mentah & Laporan":
             if start_date > end_date:
                 st.error("Tanggal mulai tidak boleh melebihi tanggal akhir.")
             else:
-                # Filter DataFrame
                 start_datetime = pd.to_datetime(start_date)
-                end_datetime = pd.to_datetime(end_date) + pd.Timedelta(days=1) # Sampai akhir hari
+                end_datetime = pd.to_datetime(end_date) + pd.Timedelta(days=1)
                 
                 filtered_df = all_data_df[
                     (all_data_df['date'] >= start_datetime) &
                     (all_data_df['date'] < end_datetime)
-                ].copy() # Buat salinan untuk diedit
+                ].copy()
                 
-                st.subheader(f"Data Editor untuk: {tab_name}")
-                st.markdown("Anda dapat mengedit data di tabel ini (misalnya memperbaiki typo). **Perhatian:** Perubahan ini akan menimpa data di Google Sheet.")
+                st.subheader(f"Editor Data untuk: {tab_name}")
+                st.markdown("Anda dapat mengedit data di tabel ini (misalnya memperbaiki typo). **Perhatian:** Mengedit data di sini TIDAK akan mengubah data stok.")
                 
-                # Data Editor (Req Poin 10)
-                # Simpan indeks asli untuk proses 'update' nanti
-                original_indices = filtered_df.index
-                
-                # Tampilkan data di editor
                 edited_df = st.data_editor(
                     filtered_df, 
                     use_container_width=True, 
                     num_rows="dynamic",
-                    # Nonaktifkan pengeditan kolom ID dan tanggal
-                    disabled=["receipt_id", "purchase_id", "date"] 
+                    disabled=[col for col in filtered_df.columns if '_id' in col or 'date' in col],
+                    key=f"editor_{tab_name}"
                 )
                 
                 if st.button("Simpan Perubahan ke Google Sheet"):
                     with st.spinner("Menyimpan perubahan..."):
-                        try:
-                            # 1. Buat salinan dari data asli (full)
-                            all_data_updated = all_data_df.copy()
-                            
-                            # 2. Kembalikan indeks asli ke data yang diedit
-                            edited_df.index = original_indices
-                            
-                            # 3. Gunakan .update() untuk menimpa perubahan dari edited_df ke all_data_updated
-                            all_data_updated.update(edited_df)
-                            
-                            # 4. Tulis kembali SEMUA data ke Google Sheet
-                            # Konversi 'date' kembali ke string agar gspread tidak error
-                            all_data_updated['date'] = all_data_updated['date'].dt.strftime('%Y-%m-%d %H:%M:%S')
-                            
-                            update_worksheet(tab_name, all_data_updated)
-                            
-                            load_data.clear() # Hapus cache
-                            st.success("Perubahan berhasil disimpan!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Gagal menyimpan perubahan: {e}")
+                        # Menggabungkan data yang diedit kembali ke data lengkap
+                        all_data_df.update(edited_df)
+                        update_worksheet(tab_name, all_data_df)
+                        st.success("Perubahan berhasil disimpan!")
+                        st.rerun()
 
                 st.subheader("Unduh Laporan (XLSX)")
-                st.markdown("Tombol di bawah ini akan mengunduh data yang **sudah Anda filter** sebagai file Excel.")
-                
-                # Download Button (Req Poin 8)
-                excel_data = to_excel(edited_df) # Gunakan data yang sudah diedit/difilter
+                excel_data = to_excel(edited_df)
                 st.download_button(
                     label="📥 Unduh Laporan .xlsx",
                     data=excel_data,

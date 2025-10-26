@@ -8,6 +8,49 @@ import io
 from datetime import datetime
 
 # =======================================================================
+# KONFIGURASI APLIKASI (PERBAIKAN v3.5 - Ditambahkan kembali)
+# =======================================================================
+
+# Mengatur konfigurasi halaman Streamlit
+st.set_page_config(
+    page_title="Evodia Management App",
+    page_icon="🌿",
+    layout="wide",
+    initial_sidebar_state="expanded" # Sidebar default terbuka di desktop
+)
+
+# Judul utama aplikasi
+st.title("🌿 Aplikasi Manajemen Bisnis Evodia v3.5")
+
+# Ambil konfigurasi dari st.secrets
+try:
+    GCP_CREDS = st.secrets["gcp_service_account"]
+    SHEET_URL = st.secrets["google_sheet"]["url"]
+except (KeyError, FileNotFoundError):
+    st.error("⚠️ Gagal memuat file 'secrets.toml'. Pastikan Anda telah mengikuti `setup_instructions.md` dan meng-klik 'Save' di Streamlit Cloud Secrets.")
+    st.stop()
+
+# Definisikan nama-nama tab dan kolomnya sesuai PRD (v3.1)
+TAB_CONFIG = {
+    "sales_orders": [
+        "receipt_id", "date", "client_name", "product_name", 
+        "product_quantity", "total_purchase", "payment_method", "status"
+    ],
+    "purchase_orders": [
+        "purchase_id", "date", "category", "sub_category", "supplier_name", 
+        "material_name", "quantity", "unit_of_measure", "price", 
+        "payment_system", "status"
+    ],
+    "inventory_stock": [
+        "material_id", "material_name", "supplier_name", 
+        "category", "current_stock", "unit_of_measure"
+    ],
+    "products_bom": [
+        "product_name", "components"
+    ]
+}
+
+# =======================================================================
 # GAYA / STYLING (CSS - Req Poin 1 + Update v3.4)
 # =======================================================================
 st.markdown(f"""
@@ -715,6 +758,7 @@ elif page == "Laporan & Editor Data":
 
     except Exception as e:
         st.error(f"Gagal memuat halaman laporan: {e}")
+
 
 
 

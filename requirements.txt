@@ -1,0 +1,1 @@
+streamlit pandas gspread gspread-dataframe penpyxl
